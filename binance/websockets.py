@@ -751,6 +751,30 @@ class BinanceSocketManager(threading.Thread):
         # and start the socket with this specific kek
         return self._start_account_socket(symbol, isolated_margin_listen_key, callback)
 
+    def start_futures_depth_socket(self, symbol, callback, depth=None, interval=None):
+        """Start a depth websocket for futures
+
+        :param symbol: required
+        :type symbol: str
+        :param callback: callback function to handle messages
+        :type callback: function
+        :param depth: optional Number of depth entries to return, default None. If passed returns a partial book instead of a diff
+        :type depth: str
+        :param interval: optional interval for updates, default None. If not set, updates happen every second. Must be 0, None (1s) or 100 (100ms)
+        :type interval: int
+
+        :returns: connection key string if successful, False otherwise
+        """
+        socket_name = symbol.lower() + '@depth'
+        if depth and depth != '1':
+            socket_name = '{}{}'.format(socket_name, depth)
+        if interval:
+            if interval in [0, 100]:
+                socket_name = '{}@{}ms'.format(socket_name, interval)
+            else:
+                raise ValueError("Websocket interval value not allowed. Allowed values are [0, 100]")
+        return self._start_futures_socket(socket_name, callback, prefix="ws/")
+
     def start_options_ticker_socket(self, symbol, callback):
         """Subscribe to a 24 hour ticker info stream
 

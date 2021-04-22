@@ -319,11 +319,12 @@ class DepthCacheManager(BaseDepthCacheManager):
     def _process_depth_message(self, msg, buffer=False):
         """Process a depth event message.
 
+        See https://binance-docs.github.io/apidocs/spot/en/#diff-depth-stream
+
         :param msg: Depth event message.
         :return:
 
         """
-
         if self._last_update_id is None:
             # Initial depth snapshot fetch not yet performed, buffer messages
             self._depth_message_buffer.append(msg)
@@ -356,6 +357,54 @@ class DepthCacheManager(BaseDepthCacheManager):
         if self._refresh_interval and int(time.time()) > self._refresh_time:
             self._init_cache()
 
+class FuturesDepthCacheManager(DepthCacheManager):
+
+    def _process_depth_message(self, msg, buffer=False):
+        """Process a depth event message.
+
+        Note that for a spot order book: msg["U"] needs to be msg["u"] of the last message in the stream + 1
+        However, for the futures order book: msg["pu"] needs to be msg["u"] of the last message in the stream
+
+        See https://binance-docs.github.io/apidocs/futures/en/#how-to-manage-a-local-order-book-correctly
+
+        :param msg: Depth event message.
+        :return:
+
+        """
+        if self._last_update_id is None:
+            # Initial depth snapshot fetch not yet performed, buffer messages
+            self._depth_message_buffer.append(msg)
+            return
+
+        if buffer and msg['u'] <= self._last_update_id:
+            # ignore any updates before the initial update id
+            return
+        elif msg['pu'] != self._last_update_id:
+            # if not buffered check we get sequential updates
+            # otherwise init cache again
+            self._init_cache()
+
+        # add any bid or ask values
+        for bid in msg['b']:
+            self._depth_cache.add_bid(bid)
+        for ask in msg['a']:
+            self._depth_cache.add_ask(ask)
+
+        # keeping update time
+        self._depth_cache.update_time = msg['E']
+
+        # call the callback with the updated depth cache
+        if self._callback:
+            self._callback(self._depth_cache)
+
+        self._last_update_id = msg['u']
+
+        # after processing event see if we need to refresh the depth cache
+        if self._refresh_interval and int(time.time()) > self._refresh_time:
+            self._init_cache()
+
+    def _get_conn_key(self):
+        self._bm.start_futures_depth_socket(self._symbol, self._depth_event, interval=self._ws_interval)
 
 class OptionsDepthCacheManager(BaseDepthCacheManager):
 
