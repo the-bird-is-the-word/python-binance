@@ -1,6 +1,7 @@
 # coding=utf-8
 
 from operator import itemgetter
+from threading import Lock
 import time
 
 from .websockets import BinanceSocketManager
@@ -18,6 +19,7 @@ class DepthCache(object):
         self.symbol = symbol
         self._bids = {}
         self._asks = {}
+        self._lock = Lock()
         self.update_time = None
 
     def add_bid(self, bid):
@@ -27,9 +29,10 @@ class DepthCache(object):
         :return:
 
         """
-        self._bids[bid[0]] = float(bid[1])
-        if bid[1] == "0.00000000":
-            del self._bids[bid[0]]
+        with self._lock:
+            self._bids[bid[0]] = float(bid[1])
+            if bid[1] == "0.00000000":
+                del self._bids[bid[0]]
 
     def add_ask(self, ask):
         """Add an ask to the cache
@@ -38,9 +41,10 @@ class DepthCache(object):
         :return:
 
         """
-        self._asks[ask[0]] = float(ask[1])
-        if ask[1] == "0.00000000":
-            del self._asks[ask[0]]
+        with self._lock:
+            self._asks[ask[0]] = float(ask[1])
+            if ask[1] == "0.00000000":
+                del self._asks[ask[0]]
 
     def get_bids(self):
         """Get the current bids
@@ -73,7 +77,9 @@ class DepthCache(object):
             ]
 
         """
-        return DepthCache.sort_depth(self._bids, reverse=True)
+        with self._lock:
+            bids = self._bids.copy()
+        return DepthCache.sort_depth(bids, reverse=True)
 
     def get_asks(self):
         """Get the current asks
@@ -106,7 +112,9 @@ class DepthCache(object):
             ]
 
         """
-        return DepthCache.sort_depth(self._asks, reverse=False)
+        with self._lock:
+            asks = self._asks.copy()
+        return DepthCache.sort_depth(asks, reverse=False)
 
     @staticmethod
     def sort_depth(vals, reverse=False):
@@ -358,6 +366,36 @@ class DepthCacheManager(BaseDepthCacheManager):
             self._init_cache()
 
 class FuturesDepthCacheManager(DepthCacheManager):
+
+    def _init_cache(self):
+        """Initialise the depth cache calling REST endpoint
+
+        :return:
+        """
+        self._last_update_id = None
+        self._depth_message_buffer = []
+
+        res = self._client.futures_order_book(symbol=self._symbol, limit=self._limit)
+
+        # initialise or clear depth cache
+        # We need the super class of DepthCacheManager
+        super(DepthCacheManager, self)._init_cache()
+
+        # process bid and asks from the order book
+        for bid in res['bids']:
+            self._depth_cache.add_bid(bid)
+        for ask in res['asks']:
+            self._depth_cache.add_ask(ask)
+
+        # set first update id
+        self._last_update_id = res['lastUpdateId']
+
+        # Apply any updates from the websocket
+        for msg in self._depth_message_buffer:
+            self._process_depth_message(msg, buffer=True)
+
+        # clear the depth buffer
+        self._depth_message_buffer = []
 
     def _process_depth_message(self, msg, buffer=False):
         """Process a depth event message.
