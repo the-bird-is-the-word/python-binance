@@ -417,6 +417,9 @@ class FuturesDepthCacheManager(DepthCacheManager):
         if buffer and msg['u'] <= self._last_update_id:
             # ignore any updates before the initial update id
             return
+        if "pu" not in msg.keys():
+            # If pu field is not in message, init cache again
+            self._init_cache()
         elif msg['pu'] != self._last_update_id:
             # if not buffered check we get sequential updates
             # otherwise init cache again
