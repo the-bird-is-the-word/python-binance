@@ -5,6 +5,7 @@ import time
 from typing import Optional, Dict, Callable
 
 from .streams import BinanceSocketManager
+from .enums import FuturesType
 from .threaded_stream import ThreadedApiManager
 
 
@@ -367,6 +368,110 @@ class DepthCacheManager(BaseDepthCacheManager):
 
         # add any bid or ask values
         self._apply_orders(msg)
+
+        # call the callback with the updated depth cache
+        res = self._depth_cache
+
+        self._last_update_id = msg['u']
+
+        # after processing event see if we need to refresh the depth cache
+        if self._refresh_interval and int(time.time()) > self._refresh_time:
+            await self._init_cache()
+
+        return res
+
+
+class FuturesDepthCacheManager(DepthCacheManager):
+    def __init__(
+        self, client, symbol, futures_type: FuturesType.USD_M, loop=None, refresh_interval=None, bm=None, limit=500,
+            conv_type=float, ws_interval=None):
+        """Initialise the DepthCacheManager
+
+        :param client: Binance API client
+        :type client: binance.Client
+        :param loop: asyncio loop
+        :param symbol: Symbol to create depth cache for
+        :type symbol: string
+        :param refresh_interval: Optional number of seconds between cache refresh, use 0 or None to disable
+        :type refresh_interval: int
+        :param limit: Optional number of orders to get from orderbook
+        :type limit: int
+        :param conv_type: Optional type to represent price, and amount, default is float.
+        :type conv_type: function.
+        :param ws_interval: Optional interval for updates on websocket, default None. If not set, updates happen every second. Must be 0, None (1s) or 100 (100ms).
+        :type ws_interval: int
+
+        """
+        super().__init__(client, symbol, loop, refresh_interval, bm, limit, conv_type)
+        self._futures_type = futures_type
+
+    async def _init_cache(self):
+        """Initialise the depth cache calling REST endpoint
+
+        :return:
+        """
+        self._last_update_id = None
+        self._depth_message_buffer = []
+
+        if self._futures_type == FuturesType.USD_M:
+            res = await self._client.futures_order_book(symbol=self._symbol, limit=self._limit)
+        else:
+            res = await self._client.futures_coin_order_book(symbol=self._symbol, limit=self._limit)
+
+        # initialise or clear depth cache
+        await super(DepthCacheManager, self)._init_cache()
+
+        # process bid and asks from the order book
+        self._apply_orders(res)
+        for bid in res['bids']:
+            self._depth_cache.add_bid(bid)
+        for ask in res['asks']:
+            self._depth_cache.add_ask(ask)
+
+        # set first update id
+        self._last_update_id = res['lastUpdateId']
+
+        # Apply any updates from the websocket
+        for msg in self._depth_message_buffer:
+            await self._process_depth_message(msg)
+
+        # clear the depth buffer
+        self._depth_message_buffer = []
+
+    def _get_socket(self):
+        return self._bm.futures_depth_socket(self._symbol, futures_type=self._futures_type)
+
+    async def _process_depth_message(self, msg):
+        """Process a depth event message.
+
+        :param msg: Depth event message.
+        :return:
+
+        """
+        if self._last_update_id is None:
+            # Initial depth snapshot fetch not yet performed, buffer messages
+            self._depth_message_buffer.append(msg)
+            return
+
+        if "data" in msg.keys():
+            msg = msg["data"]
+
+        if msg['u'] <= self._last_update_id:
+            # ignore any updates before the initial update id
+            return
+        if "pu" not in msg.keys():
+            # If pu field is not in message, init cache again
+            await self._init_cache()
+        elif msg['pu'] != self._last_update_id:
+            # if not buffered check we get sequential updates
+            # otherwise init cache again
+            await self._init_cache()
+
+        # add any bid or ask values
+        self._apply_orders(msg)
+
+        # keeping update time
+        self._depth_cache.update_time = msg['E']
 
         # call the callback with the updated depth cache
         res = self._depth_cache

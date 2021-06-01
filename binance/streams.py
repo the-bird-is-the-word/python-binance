@@ -930,6 +930,19 @@ class BinanceSocketManager:
         """
         return self._get_account_socket('futures', stream_url=self.FSTREAM_URL)
 
+    def futures_depth_socket(self, symbol: str, depth: Optional[str] = None, interval: Optional[int] = None,
+                             futures_type: Optional[FuturesType] = FuturesType.USD_M):
+        """Start a websocket for futures depth data."""
+        socket_name = symbol.lower() + '@depth'
+        if depth and depth != '1':
+            socket_name = f'{socket_name}{depth}'
+        if interval:
+            if interval in [0, 100]:
+                socket_name = f'{socket_name}@{interval}ms'
+            else:
+                raise ValueError("Websocket interval value not allowed. Allowed values are [0, 100]")
+        return self._get_futures_socket(socket_name, futures_type)
+
     def coin_futures_socket(self):
         """Start a websocket for coin futures data
 
