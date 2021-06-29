@@ -244,7 +244,13 @@ class KeepAliveWebsocket(ReconnectingWebsocket):
         return listen_key
 
     async def _keepalive_socket(self):
-        listen_key = await self._get_listen_key()
+        listen_key = None
+        while listen_key is None:
+            try:
+                listen_key = await self._get_listen_key()
+            except ClientOSError:
+                logging.warning("ClientOSError while receiving listen key. Wait and retry...")
+                asyncio.sleep(60)
 
         if listen_key != self._path:
             logging.debug("listen key changed: reconnect")
