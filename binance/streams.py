@@ -8,6 +8,7 @@ from random import random
 from typing import Optional, List, Dict, Callable, Any
 
 import websockets as ws
+from aiohttp.client_exceptions import ClientOSError
 
 from .client import AsyncClient
 from .exceptions import BinanceWebsocketUnableToConnect
@@ -250,7 +251,7 @@ class KeepAliveWebsocket(ReconnectingWebsocket):
                 listen_key = await self._get_listen_key()
             except ClientOSError:
                 logging.warning("ClientOSError while receiving listen key. Wait and retry...")
-                asyncio.sleep(60)
+                await asyncio.sleep(20)
 
         if listen_key != self._path:
             logging.debug("listen key changed: reconnect")
